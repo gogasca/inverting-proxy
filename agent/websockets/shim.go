@@ -289,9 +289,10 @@ func ShimBody(shimPath string) (func(resp *http.Response) error, error) {
 }
 
 type sessionMessage struct {
-	ID      string      `json:"id,omitempty"`
-	Message interface{} `json:"msg,omitempty"`
-	Version int         `json:"v,omitempty"`
+	ID          string      `json:"id,omitempty"`
+	Message     interface{} `json:"msg,omitempty"`
+	Version     int         `json:"v,omitempty"`
+	Subprotocol string      `json:"s,omitempty"`
 }
 
 func createShimChannel(ctx context.Context, host, shimPath string, rewriteHost bool, openWebsocketWrapper func(http.Handler, *metrics.MetricHandler) http.Handler, enableWebsocketInjection bool, metricHandler *metrics.MetricHandler) http.Handler {
@@ -330,6 +331,7 @@ func createShimChannel(ctx context.Context, host, shimPath string, rewriteHost b
 			ID:      sessionID,
 			Message: targetURL.String(),
 			Version: conn.protocolVersion,
+			Subprotocol: conn.Subprotocol(),
 		}
 		respBytes, err := json.Marshal(resp)
 		if err != nil {
@@ -488,6 +490,7 @@ func createShimChannel(ctx context.Context, host, shimPath string, rewriteHost b
 			statusCode := http.StatusBadRequest
 			http.Error(w, fmt.Sprintf("attempt to read data from a closed session: %q", msg.ID), statusCode)
 			metricHandler.WriteResponseCodeMetric(statusCode)
+			connections.Delete(msg.ID)
 			return
 		} else if serverMsgs == nil {
 			statusCode := http.StatusRequestTimeout
