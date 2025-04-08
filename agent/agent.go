@@ -61,7 +61,7 @@ const (
 
 var (
 	proxy                     = flag.String("proxy", "", "URL (including scheme) of the inverting proxy")
-	proxyTimeout              = flag.Duration("proxy-timeout", 60*time.Second, "Client timeout when sending requests to the inverting proxy")
+        proxyTimeout              = flag.Duration("proxy-timeout", 120*time.Second, "Client timeout when sending requests to the inverting proxy")
 	host                      = flag.String("host", "localhost:8080", "Hostname (including port) of the backend server")
 	forceHTTP2                = flag.Bool("force-http2", false, "Force connections to the backend host to be performed using HTTP/2")
 	backendID                 = flag.String("backend", "", "Unique ID for this backend.")
@@ -205,17 +205,25 @@ func processOneRequest(client *http.Client, hostProxy http.Handler, backendID st
 func pollForNewRequests(pollingCtx context.Context, client *http.Client, hostProxy http.Handler, backendID string) {
 	previouslySeenRequests := lru.New(requestCacheLimit)
 
-	var retryCount uint
+        const maxRetries = 3
+        var retryCount int
 	for {
 		select {
 		case <-pollingCtx.Done():
 			log.Printf("Request polling context completed with ctx err: %v\n", pollingCtx.Err())
 			return
 		default:
-			if requests, err := utils.ListPendingRequests(client, *proxy, backendID, metricHandler); err != nil {
-				log.Printf("Failed to read pending requests: %q\n", err.Error())
+                        requests, err := utils.ListPendingRequests(client, *proxy, backendID, metricHandler)
+                        if err != nil {
+                                if retryCount < maxRetries {
+                                        log.Printf("Failed to read pending requests, retrying (%d/%d): %q\n", retryCount+1, maxRetries, err.Error())
+                                        time.Sleep(utils.ExponentialBackoffDuration(retryCount))
+                                        retryCount++
+                                        continue
+                                }
+                                log.Printf("Failed to read pending requests after %d retries: %q\n", maxRetries, err.Error())
+                                // Even after multiple retries, we were unable to list requests. To avoid spinning the CPU, sleep for a bit before trying again.
 				time.Sleep(utils.ExponentialBackoffDuration(retryCount))
-				retryCount++
 			} else {
 				retryCount = 0
 				for _, requestID := range requests {
